@@ -24,8 +24,8 @@
 #include <sstream>
 #include <iostream>
 #include "api/client/client.h"
-#include "api/protocol/revision.h"
 #include "api/protocol/message.pb.h"
+#include "./version.h"
 
 Options::Options() {
     endpoint = NULL;
@@ -44,7 +44,7 @@ bool Options::parse(int argc, char **argv) {
          "JSON description of message to send", "FILE"},
         {"output", 'o', 0, G_OPTION_ARG_FILENAME, &output,
          "JSON description of response message in a file", "FILE"},
-        {"stdout", 's', 0, G_OPTION_ARG_FILENAME, &std_out,
+        {"stdout", 's', 0, G_OPTION_ARG_NONE, &std_out,
          "JSON description of response message on stdout", NULL},
         {"verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,
          "show details of on each operations", NULL},
@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
 
     // Does user asked for revision ?
     if (options.revision) {
-        std::cout << "Revision number: " << std::to_string(PROTOS_REVISION) <<
+        std::cout << VERSION_INFO <<
         std::endl;
         return 0;
     }

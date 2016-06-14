@@ -46,8 +46,13 @@ if [ $err = true ]; then
     exit 1
 fi
 
+# prepare out.txt
+echo ----------- $request_file ------------ >> out.txt
+echo >> out.txt
+echo >> out.txt # add some blank lines
+
 # Start server
-$server -l debug -i noze -s /tmp/ --endpoint=tcp://0.0.0.0:8765 &
+$server -c1 -n1 --vdev=eth_ring0 -- -l debug -i noze -s /tmp --endpoint=tcp://0.0.0.0:8765 --packet-trace &>> out.txt &
 server_pid=$!
 sleep 1
 kill -s 0 $server_pid
@@ -58,21 +63,29 @@ fi
 
 # Prepare client to run
 output=/tmp/butterfly_test_api
-client_cmd="$client --endpoint=tcp://127.0.0.1:8765 -i $request_file -o $output"
+client_cmd="$client --endpoint=tcp://127.0.0.1:8765 -i $request_file -o $output -v"
 if [ -n "$learn_mode" ]; then
     output=$expected_response
     client_cmd="$client --endpoint=tcp://127.0.0.1:8765 -i $request_file -o $output -v"
 fi
 
 # Run client
-$client_cmd &
+$client_cmd  &> client_out.txt &
 client_pid=$!
-sleep 1
 kill -s 0 $client_pid &> /dev/null
-if [ $? -eq 0 ]; then 
-    echo "request process too long"
-    exit 1
-fi
+killret=$?
+killcount=0
+while [ $killret -eq 0 ]; do
+    #echo "waiting for client to finish ..."
+    sleep 1
+    kill -s 0 $client_pid &> /dev/null
+    killret=$?
+    ((killcount+=1))
+    if [ $killcount -eq 40 ]; then
+        echo "request process too long"
+        exit 1
+    fi
+done
 
 # Is server still alive ?
 kill -s 0 $server_pid

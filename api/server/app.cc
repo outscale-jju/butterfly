@@ -22,10 +22,12 @@
 #include <thread>
 #include <fstream>
 #include <string>
+#include <sstream>
 #include "api/server/app.h"
+#include "api/server/graph.h"
 #include "api/server/server.h"
 #include "api/server/simpleini/SimpleIni.hpp"
-#include "api/protocol/revision.h"
+#include "./version.h"
 
 namespace app {
 Stats::Stats() {
@@ -36,10 +38,16 @@ Stats::Stats() {
 Config::Config() {
     api_endpoint = "tcp://0.0.0.0:9999";
     log_level = "error";
-    show_revision = false;
+    graph_core_id = 0;
+    packet_trace = false;
 }
 
 bool Config::parse_cmd(int argc, char **argv) {
+    bool ret = true;
+    int i;
+    bool show_revision;
+    bool dpdk_help;
+
     auto gfree = [](gchar *p) { g_free(p); };
     std::unique_ptr<gchar, decltype(gfree)> config_path_cmd(nullptr, gfree);
     std::unique_ptr<gchar, decltype(gfree)> external_ip_cmd(nullptr, gfree);
@@ -47,6 +55,7 @@ bool Config::parse_cmd(int argc, char **argv) {
     std::unique_ptr<gchar, decltype(gfree)> log_level_cmd(nullptr, gfree);
     std::unique_ptr<gchar, decltype(gfree)> pid_path_cmd(nullptr, gfree);
     std::unique_ptr<gchar, decltype(gfree)> socket_folder_cmd(nullptr, gfree);
+    std::unique_ptr<gchar, decltype(gfree)> graph_core_id_cmd(nullptr, gfree);
 
     static GOptionEntry entries[] = {
         {"config", 'c', 0, G_OPTION_ARG_FILENAME, &config_path_cmd,
@@ -65,15 +74,55 @@ bool Config::parse_cmd(int argc, char **argv) {
          "Write PID of process in specified file", "FILE"},
         {"socket-dir", 's', 0, G_OPTION_ARG_FILENAME, &socket_folder_cmd,
          "Create network sockets in specified directory", "DIR"},
+        {"graph-cpu-core", 'u', 0, G_OPTION_ARG_STRING, &graph_core_id_cmd,
+         "Choose your CPU core where to run packet processing (default=0)",
+         "ID"},
+        {"packet-trace", 't', 0, G_OPTION_ARG_NONE, &config.packet_trace,
+         "Trace packets going through Butterfly", nullptr},
+        {"dpdk-help", 0, 0, G_OPTION_ARG_NONE, &dpdk_help,
+         "print DPDK help", nullptr},
         { nullptr }
     };
     GOptionContext *context = g_option_context_new("");
+    g_option_context_set_summary(context,
+            "butterfly-server [EAL options] -- [butterfly options]");
+    g_option_context_set_description(context, "example:\n"
+            "butterfly-server -c0xF -n1  --socket-mem 64"
+            " -- -i 43.0.0.1 -e tcp://127.0.0.1:8765 -s /tmp");
     g_option_context_add_main_entries(context, entries, nullptr);
 
     GError *error = nullptr;
+
+    for (i = 0; i < argc; i++) {
+        if (g_strcmp0(argv[i], "--") == 0) {
+            break;
+        }
+    }
+    if (i != argc) {
+        argc -= i;
+        argv += i;
+    } else {
+        ret = false;
+    }
+
     if (!g_option_context_parse(context, &argc, &argv, &error)) {
         if (error != nullptr)
             std::cout << error->message << std::endl;
+        return false;
+    }
+
+    if (dpdk_help) {
+        argc = 1;
+        argv[1] = const_cast<char *>("-h");
+
+        app::graph.start(argc, argv);
+        app::graph.stop();
+        return false;
+    }
+
+    // Ask for revision number ?
+    if (show_revision) {
+        std::cout << VERSION_INFO << std::endl;
         return false;
     }
 
@@ -90,7 +139,8 @@ bool Config::parse_cmd(int argc, char **argv) {
         pid_path = std::string(&*pid_path_cmd);
     if (socket_folder_cmd != nullptr)
         socket_folder = std::string(&*socket_folder_cmd);
-
+    if (graph_core_id_cmd != nullptr)
+        graph_core_id = std::atoi(&*graph_core_id_cmd);
     // Load from configuration file if provided
     if (config_path.length() > 0 && !LoadConfigFile(config_path)) {
         std::cerr << "Failed to open configuration file" << std::endl;
@@ -98,7 +148,10 @@ bool Config::parse_cmd(int argc, char **argv) {
         return false;
     }
 
-    return true;
+    if (!ret) {
+        std::cerr << "wrong usage, butterfly-server use -h" << std::endl;
+    }
+    return ret;
 }
 
 bool Config::missing_mandatory() {
@@ -124,11 +177,16 @@ Log::Log() {
     set_log_level("error");
 
     // Openlog
-    openlog("butterfly", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL0);
+    open();
 }
 
 Log::~Log() {
     closelog();
+}
+
+void Log::open() {
+    openlog("butterfly", LOG_CONS | LOG_PID | LOG_NDELAY | LOG_PERROR,
+            LOG_LOCAL0);
 }
 
 bool Log::set_log_level(std::string level) {
@@ -149,63 +207,48 @@ bool Log::set_log_level(std::string level) {
     return true;
 }
 
-std::string Log::build_details(const char *message, const char *file,
-                               const char *func, int line) {
-    std::string o;
-    if (message != nullptr)
-        o += std::string(message);
-    if (file != nullptr)
-        o += std::string(" ") + std::string(file);
-    if (func != nullptr)
-        o += std::string(" (") + std::string(func) + std::string(")");
-    if (line != -1)
-        o += std::string(":") + std::to_string(line);
-    return o;
+#define DEBUG_INTERNAL(TYPE) do {                                       \
+        va_list ap;                                                     \
+                                                                        \
+        va_start(ap, message);                                          \
+        vsyslog(LOG_##TYPE, \
+            (std::string("<"#TYPE"> ") + message).c_str(), ap);         \
+        va_end(ap);                                                     \
+    } while (0)
+
+void Log::debug(const char *message, ...) {
+    DEBUG_INTERNAL(DEBUG);
 }
 
-void Log::debug(const char *message, const char *file,
-                const char *func, int line) {
-    std::string o = build_details(message, file, func, line);
-    syslog(LOG_DEBUG, "<debug> %s", o.c_str());
+void Log::info(const char *message, ...) {
+    DEBUG_INTERNAL(INFO);
 }
 
-void Log::info(const char *message, const char *file,
-               const char *func, int line) {
-    std::string o = build_details(message, file, func, line);
-    syslog(LOG_INFO, "<info> %s", o.c_str());
+void Log::warning(const char *message, ...) {
+    DEBUG_INTERNAL(WARNING);
 }
 
-void Log::warning(const char *message, const char *file,
-                  const char *func, int line) {
-    std::string o = build_details(message, file, func, line);
-    syslog(LOG_WARNING, "<warning> %s", o.c_str());
+void Log::error(const char *message, ...) {
+    DEBUG_INTERNAL(ERR);
 }
 
-void Log::error(const char *message, const char *file,
-                const char *func, int line) {
-    std::string o = build_details(message, file, func, line);
-    syslog(LOG_ERR, "<error> %s", o.c_str());
+void Log::debug(const std::string &message, ...) {
+    DEBUG_INTERNAL(DEBUG);
 }
 
-void Log::debug(const std::string &message, const char *file,
-                const char *func, int line) {
-    debug(message.c_str(), file, func, line);
+void Log::info(const std::string &message, ...) {
+    DEBUG_INTERNAL(INFO);
 }
 
-void Log::info(const std::string &message, const char *file,
-               const char *func, int line) {
-    info(message.c_str(), file, func, line);
+void Log::warning(const std::string &message, ...) {
+    DEBUG_INTERNAL(WARNING);
 }
 
-void Log::warning(const std::string &message, const char *file,
-                  const char *func, int line) {
-    warning(message.c_str(), file, func, line);
+void Log::error(const std::string &message, ...) {
+    DEBUG_INTERNAL(ERR);
 }
 
-void Log::error(const std::string &message, const char *file,
-                const char *func, int line) {
-    error(message.c_str(), file, func, line);
-}
+#undef DEBUG_INTERNAL
 
 void WritePid(std::string pid_path) {
     std::ofstream f;
@@ -268,15 +311,21 @@ bool LoadConfigFile(std::string config_path) {
         log.debug(m);
     }
 
+    v = ini.GetValue("general", "graph-core-id", "_");
+    if (std::string(v) != "_") {
+        config.graph_core_id = std::stoi(v);
+        std::string m = "LoadConfig: get graph-core-id from config: " +
+            config.graph_core_id;
+        log.debug(m);
+    }
+    config.tid = 0;
+
     return true;
 }
 
 void SignalRegister() {
     signal(SIGINT, SignalHandler);
     signal(SIGQUIT, SignalHandler);
-    signal(SIGABRT, SignalHandler);
-    signal(SIGKILL, SignalHandler);
-    signal(SIGSEGV, SignalHandler);
     signal(SIGSTOP, SignalHandler);
 }
 
@@ -293,8 +342,38 @@ Config config;
 Stats stats;
 Model model;
 Log log;
-
+Graph graph;
 }  // namespace app
+
+int initCGroup() {
+  system("mkdir /sys/fs/cgroup/cpu/butterfly");
+  system("echo 4096 > /sys/fs/cgroup/cpu/butterfly/cpu.shares");
+  return 0;
+}
+
+void app::setCGroup() {
+  if (!app::config.tid)
+    return;
+  std::string setStr;
+  std::string unsetOtherStr;
+  std::ostringstream oss;
+
+  oss << app::config.tid;
+  setStr = "echo " + oss.str() + " > /sys/fs/cgroup/cpu/butterfly/tasks";
+  unsetOtherStr = "grep -v " + oss.str() +
+          " /sys/fs/cgroup/cpu/butterfly/tasks |" +
+          " while read ligne; do echo $ligne >" +
+          " /sys/fs/cgroup/cpu/tasks ; done";
+
+  system(setStr.c_str());
+  system(unsetOtherStr.c_str());
+}
+
+void app::destroyCGroup() {
+  system("cat /sys/fs/cgroup/cpu/butterfly/tasks |"
+         " while read ligne; do echo $ligne > /sys/fs/cgroup/cpu/tasks ; done");
+  system("rmdir /sys/fs/cgroup/cpu/butterfly");
+}
 
 int
 main(int argc, char *argv[]) {
@@ -309,12 +388,6 @@ main(int argc, char *argv[]) {
         // Set log level from options
         app::log.set_log_level(app::config.log_level);
 
-        // Ask for revision number ?
-        if (app::config.show_revision) {
-            std::cout << PROTOS_REVISION << std::endl;
-            return 0;
-        }
-
         // Ready to start ?
         if (app::config.missing_mandatory()) {
             std::cerr << "Some arguments are missing, please check " \
@@ -328,9 +401,12 @@ main(int argc, char *argv[]) {
 
         app::log.info("butterfly starts");
 
-        // Prepare & run libbutterfly
-        // TODO(jerome.jutteau)
-
+        // Prepare & run packetgraph
+        if (!app::graph.start(argc, argv)) {
+            app::log.error("cannot start packetgraph, exiting");
+            app::request_exit = true;
+        }
+        initCGroup();
         // Prepare & run API server
         APIServer server(app::config.api_endpoint, &app::request_exit);
         server.run_threaded();
@@ -338,11 +414,11 @@ main(int argc, char *argv[]) {
         while (!app::request_exit)
             std::this_thread::sleep_for(std::chrono::seconds(1));
     } catch (std::exception & e) {
-        LOG_ERROR_(e.what());
+        LOG_ERROR_("%s", e.what());
     }
 
-    // Wait few seconds to give a chance to detached threads to exit cleanly
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    // Ask graph to stop
+    app::graph.stop();
 
     app::log.info("butterfly exit");
     return 0;

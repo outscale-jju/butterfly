@@ -6,11 +6,12 @@ endforeach()
 
 add_executable(api_client ${SOURCES_P})
 
-add_dependencies(api_client api_protocol libzmq zmqpp)
+add_dependencies(api_client api_protocol libzmq zmqpp butterfly-genere-version)
 
 set_target_properties(api_client PROPERTIES OUTPUT_NAME butterfly-client)
 
-include_directories(${PROJECT_SOURCE_DIR}
+include_directories(${GLIB2_INCLUDE_DIR} ${GLIB2_INTERNAL_INCLUDE_DIR}
+                    ${PROJECT_SOURCE_DIR}
                     ${PROJECT_BINARY_DIR}
                     ${PROTOBUF_INCLUDE_DIR}
                     ${LIBZMQ_INCLUDE_DIR}
@@ -25,6 +26,6 @@ target_link_libraries(api_client
                       ${LIBZMQ_LIBRARIES}
                       ${ZMQPP_LIBRARIES})
 
-set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -Wall")
+set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS} -Wall -static-libgcc -static-libstdc++")
 
 unset (SOURCES_P)

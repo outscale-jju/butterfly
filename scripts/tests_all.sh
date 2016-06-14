@@ -5,59 +5,65 @@ BUTTERFLY_ROOT=$1
 BUTTERFLY_BUILD_ROOT=.
 
 # Test Butterfly build root
-if [ ! -f $BUTTERFLY_BUILD_ROOT/packetgraph/tests/tests ]; then
+if [ ! -f $BUTTERFLY_BUILD_ROOT/CMakeCache.txt ]; then
     echo "Please run script from the build directory"
     exit 1
 fi
 
 # Test Butterfly root
-if [ ! -d $BUTTERFLY_ROOT/packetgraph ]; then
+if [ ! -d $BUTTERFLY_ROOT/api ]; then
     echo "Please set butterfly's source root as parameter"
     exit 1
 fi
 
 # Launch the tests suites of all the subprojects
 
-GREEN="\033[32m"
-RED="\033[31m"
-NORMAL="\033[0m"
-
-# Packet graph tests
-$BUTTERFLY_ROOT/scripts/tests_packetgraph.sh $BUTTERFLY_ROOT
-if [ $? != 0 ]; then
-    echo "${RED}packetgraph test failed${NORMAL}"
-    exit 1
-else
-    echo "${GREEN}packetgraph test OK${NORMAL}"
-fi
-
-# Packet graph style test
-$BUTTERFLY_ROOT/scripts/tests_packetgraph_style.sh $BUTTERFLY_ROOT
-if [ $? != 0 ]; then
-    echo "${RED}packetgraph style test failed${NORMAL}"
-    exit 1
-else
-    echo "${GREEN}packetgraph style test OK${NORMAL}"
-fi
-
 # API tests
 $BUTTERFLY_ROOT/scripts/tests_api.sh $BUTTERFLY_ROOT
 if [ $? != 0 ]; then
-    echo "${RED}API test failed${NORMAL}"
+    tput setaf 1
+    echo "API test failed"
+    tput setaf 7
     exit 1
 else
-    echo "${GREEN}API test OK${NORMAL}"
+    tput setaf 2
+    echo "API test OK"
+    tput setaf 7
 fi
+
+sleep 5
 
 # API style test
 $BUTTERFLY_ROOT/scripts/tests_api_style.sh $BUTTERFLY_ROOT
 if [ $? != 0 ]; then
-    echo "${RED}API style test failed${NORMAL}"
+    tput setaf 1
+    echo "API style test failed"
+    tput setaf 7
     exit 1
 else
-    echo "${GREEN}API style test OK${NORMAL}"
+    tput setaf 2
+    echo "API style test OK"
+    tput setaf 7
 fi
 
-echo "${GREEN}All test succeded${NORMAL}"
+sleep 5
+
+# Scenario test
+$BUTTERFLY_ROOT/scripts/tests_scenario.sh $BUTTERFLY_ROOT
+if [ $? != 0 ]; then
+    tput setaf 1
+    echo "API scenario test failed"
+    tput setaf 7
+    exit 1
+else
+    tput setaf 2
+    echo "API scenario test OK"
+    tput setaf 7
+fi
+
+
+tput setaf 2
+echo "All test succeded"
+tput setaf 7
 exit 0
 

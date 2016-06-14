@@ -21,11 +21,12 @@
 #include <string>
 #include <utility>
 #include <algorithm>
+#include <map>
 #include "api/server/api.h"
 #include "api/server/app.h"
 #include "api/server/model.h"
 #include "api/protocol/message.pb.h"
-#include "api/protocol/revision.h"
+#include "./version.h"
 
 void API::process_request(const std::string &request, std::string *response) {
     if (response == nullptr)
@@ -89,7 +90,7 @@ void API::dispatch(const proto::Message &req, proto::Message *rep) {
     rep->set_revision(PROTOS_REVISION);
 
     if (req.has_message_0()) {
-        LOG_DEBUG_("dispatch to MessageV0");
+        app::log.debug("dispatch to MessageV0");
         rep->set_allocated_message_0(new MessageV0);
         auto req_0 = req.message_0();
         auto rep_0 = rep->mutable_message_0();
@@ -101,22 +102,22 @@ void API::dispatch(const proto::Message &req, proto::Message *rep) {
     }
 }
 
-bool API::action_nic_add(const app::Nic &nic, std::string path,
+bool API::action_nic_add(const app::Nic &nic, std::string *path,
     app::Error *error) {
+    auto it = app::model.nics.find(nic.id);
     // Do we already have this NIC ?
-    if (app::model.nics.find(nic.id) != app::model.nics.end()) {
+    if (it != app::model.nics.end()) {
         std::string m = "NIC already exists with id " + nic.id;
         app::log.warning(m);
         // Disable NIC in packetgraph
-        // TODO(jerome.jutteau)
+        app::graph.nic_del(it->second);
         // Remove NIC from model
         app::model.nics.erase(nic.id);
         // Retry !
         return API::action_nic_add(nic, path, error);
     }
 
-    // TODO(jerome.jutteau)
-    path = "...";
+    *path = app::graph.nic_add(nic);
 
     // Add NIC in model
     std::pair<std::string, app::Nic> p(nic.id, nic);
@@ -135,26 +136,49 @@ bool API::action_nic_update(const API::NicUpdate &update,
             error->description = m;
         return false;
     }
-
-    // TODO(jerome.jutteau)
-
-    // Update NIC informations in model
+    // Get the nic
     app::Nic &n = itn->second;
-    n.ip_anti_spoof = update.ip_anti_spoof;
-    n.ip_list = update.ip;
-    n.security_groups = update.security_groups;
+
+    // Update IP if needed
+    if (n.ip_list != update.ip) {
+        n.ip_list = update.ip;
+    }
+
+    // Update antispoof if needed
+    if (update.has_ip_anti_spoof &&
+        n.ip_anti_spoof != update.ip_anti_spoof) {
+        n.ip_anti_spoof = update.ip_anti_spoof;
+        app::graph.nic_config_anti_spoof(n, update.ip_anti_spoof);
+    }
+    // Still update antispoof if we ip changed
+    if (n.ip_list != update.ip && n.ip_anti_spoof) {
+        app::graph.nic_config_anti_spoof(n, true);
+    }
+
+    // Update security groups if needed
+    if (n.security_groups != update.security_groups) {
+        n.security_groups = update.security_groups;
+        app::graph.fw_update(n);
+
+    } else if (n.ip_list != update.ip) {
+        // Still reload firewall if we don't upgraded security groups but
+        // changed the ip listing.
+        app::graph.fw_update(n);
+    }
+
     return true;
 }
 
 bool API::action_nic_del(std::string id, app::Error *error) {
+    auto nic = app::model.nics.find(id);
     // Do we have this NIC ?
-    if (app::model.nics.find(id) == app::model.nics.end()) {
+    if (nic == app::model.nics.end()) {
         std::string m = "NIC does not exist with this id " + id;
         app::log.warning(m);
         return true;
     }
 
-    // TODO(jerome.jutteau)
+    app::graph.nic_del(nic->second);
 
     // Remove NIC from model
     app::model.nics.erase(id);
@@ -168,7 +192,8 @@ bool API::action_nic_export(std::string id, std::string *data,
     if (data == nullptr)
         return false;
     // Do we have this NIC ?
-    if (app::model.nics.find(id) == app::model.nics.end()) {
+    auto nic = app::model.nics.find(id);
+    if (nic == app::model.nics.end()) {
         std::string m = "NIC does not exist with id " + id;
         app::log.error(m);
         if (error != nullptr)
@@ -176,7 +201,7 @@ bool API::action_nic_export(std::string id, std::string *data,
         return false;
     }
 
-    // TODO(jerome.jutteau)
+    *data = app::graph.nic_export(nic->second);
 
     return true;
 }
@@ -185,44 +210,104 @@ bool API::action_nic_stats(std::string id, uint64_t *in, uint64_t *out,
     app::Error *error) {
     if (in == nullptr || out == nullptr)
         return false;
-    // TODO(jerome.jutteau)
-    *in = 42;
-    *out = 42;
+
+    auto nic = app::model.nics.find(id);
+    if (nic == app::model.nics.end()) {
+        std::string m = "NIC does not exist with id " + id;
+        app::log.error(m);
+        if (error != nullptr)
+            error->description = m;
+        return false;
+    }
+
+    app::graph.nic_get_stats(nic->second, in, out);
     return true;
 }
 
+void API::sg_update(const app::Sg &sg) {
+    std::map<std::string, app::Nic>::iterator it;
+    std::vector<std::string>::iterator sg_it;
+    auto found = false;
+    // Iterate for each NICs and check if we need to update the firewall.
+    for (it = app::model.nics.begin(); it != app::model.nics.end(); it++) {
+        app::Nic &nic = it->second;
+        for (sg_it = nic.security_groups.begin();
+            sg_it != nic.security_groups.end();
+            sg_it++) {
+            if (*sg_it == sg.id) {
+                app::graph.fw_update(nic);
+                found = true;
+            }
+        }
+    }
+    if (!found) {
+        std::string m = "security group " + sg.id +
+            " update didn't updated any NIC";
+        app::log.warning(m);
+    }
+}
+
+void API::sg_update(const app::Sg &sg, const app::Rule &rule) {
+    std::map<std::string, app::Nic>::iterator it;
+    std::vector<std::string>::iterator sg_it;
+    auto found = false;
+    // Iterate for each NICs and check if we need to update the firewall.
+    for (it = app::model.nics.begin(); it != app::model.nics.end(); it++) {
+        app::Nic &nic = it->second;
+        for (sg_it = nic.security_groups.begin();
+             sg_it != nic.security_groups.end();
+             sg_it++) {
+            if (*sg_it == sg.id) {
+                app::graph.fw_add_rule(nic, rule);
+                found = true;
+            }
+        }
+    }
+    if (!found) {
+        std::string m = "security group " + sg.id +
+            " update didn't add a rule in any NIC";
+        app::log.warning(m);
+    }
+}
+
 bool API::action_sg_add(const app::Sg &sg, app::Error *error) {
+    auto itn = app::model.security_groups.find(sg.id);
+
     // Do we already have this security group ?
-    if (app::model.security_groups.find(sg.id) !=
-        app::model.security_groups.end()) {
+    if (itn != app::model.security_groups.end()) {
         std::string m = "Security group already exists with this id " + sg.id;
         app::log.warning(m);
-        // TODO(jerome.jutteau) replace
+        // Check if the securiy group content is the same.
+        app::Sg &original_sg = itn->second;
+        if (sg == original_sg)
+            return true;
+        // If not, let's update model
+        original_sg = sg;
     } else {
-        // TODO(jerome.jutteau) add
         std::pair<std::string, app::Sg> p(sg.id, sg);
         app::model.security_groups.insert(p);
     }
+
+    sg_update(sg);
     return true;
 }
 
 bool API::action_sg_del(std::string id, app::Error *error) {
-    // Do we have this security group ?
-    if (app::model.security_groups.find(id) ==
-        app::model.security_groups.end()) {
+    auto m = app::model.security_groups.find(id);
+    if (m == app::model.security_groups.end()) {
         std::string m = "Security group does not exist with this id " + id;
         app::log.warning(m);
         return true;
     }
 
-    // TODO(jerome.jutteau)
-
     // Remove security group from model
     app::model.security_groups.erase(id);
 
+    // Update graph
+    app::Sg &sg = m->second;
+    sg_update(sg);
     return true;
 }
-
 
 bool API::action_sg_rule_add(std::string sg_id, const app::Rule &rule,
     app::Error *error) {
@@ -253,11 +338,12 @@ bool API::action_sg_rule_add(std::string sg_id, const app::Rule &rule,
         return true;
     }
 
-    // TODO(jerome.jutteau)
-
     // Add rule to security group
     std::pair<std::size_t, app::Rule> p(h, rule);
     sg.rules.insert(p);
+
+    // Update graph
+    sg_update(sg, rule);
     return true;
 }
 
@@ -286,21 +372,21 @@ bool API::action_sg_rule_del(std::string sg_id, const app::Rule &rule,
         return true;
     }
 
-    // TODO(jerome.jutteau)
-
     // Remove rule from security group
     sg.rules.erase(h);
+
+    // Update graph
+    sg_update(sg);
     return true;
 }
-
 
 bool API::action_sg_member_add(std::string sg_id, const app::Ip &ip,
     app::Error *error) {
     // Do we have this security group ?
     auto m = app::model.security_groups.find(sg_id);
     if (m == app::model.security_groups.end()) {
-        std::string ms = "Security group does not exist with this id " + sg_id;
-        app::log.warning(ms);
+        app::log.warning("Security group does not exist with this id",
+                         sg_id.c_str());
         // Create missing security group
         app::Sg nsg;
         nsg.id = sg_id;
@@ -308,8 +394,8 @@ bool API::action_sg_member_add(std::string sg_id, const app::Ip &ip,
         app::model.security_groups.insert(p);
         m = app::model.security_groups.find(sg_id);
         if (m == app::model.security_groups.end()) {
-            ms = "Really cannot create security group with id" + sg_id;
-            LOG_ERROR_(ms);
+            LOG_ERROR_("Really cannot create security group with id %s",
+                       sg_id.c_str());
             return false;
         }
     }
@@ -319,17 +405,16 @@ bool API::action_sg_member_add(std::string sg_id, const app::Ip &ip,
     // Does member already exist in security group ?
     auto res = std::find(sg.members.begin(), sg.members.end(), ip);
     if (res != sg.members.end()) {
-        std::string m = "member " + ip.str() + " already exist in security " \
-            "group " + sg_id;
-        app::log.warning(m);
+        app::log.warning("member %s already exist in security group %s",
+                         res->str().c_str(), sg_id.c_str());
         return true;
     }
-
-    // TODO(jerome.jutteau)
 
     // Add member to security group
     sg.members.push_back(ip);
 
+    // Update graph
+    sg_update(sg);
     return true;
 }
 
@@ -339,9 +424,8 @@ bool API::action_sg_member_del(std::string sg_id, const app::Ip &ip,
     // Do we have this security group ?
     auto m = app::model.security_groups.find(sg_id);
     if (m == app::model.security_groups.end()) {
-        std::string m = "Can't delete member from a non-existing security " \
-            "group " + sg_id;
-        app::log.warning(m);
+        app::log.warning("Can't delete member from a non-existing security " \
+            "group %s", sg_id.c_str());
         return true;
     }
 
@@ -350,36 +434,21 @@ bool API::action_sg_member_del(std::string sg_id, const app::Ip &ip,
      // Does member exist in security group ?
     auto res = std::find(sg.members.begin(), sg.members.end(), ip);
     if (res == sg.members.end()) {
-        std::string m = "Can't delete non-existing member from security " \
-            "group " + sg_id;
-        app::log.warning(m);
+        app::log.warning("Can't delete non-existing member from security " \
+            "group ", sg_id.c_str());
         return true;
     }
 
-    // TODO(jerome.jutteau)
-
     // Delete member from security group
     sg.members.erase(res);
+
+    // Update graph
+    sg_update(sg);
     return true;
 }
 
 std::string API::action_graph_dot() {
-    // TODO(jerome.jutteau)
-    return "graph butterfly { \n" \
-        "nic_0 [label=\"id-1\" shape=box]; \n" \
-        "nic_1 [label=\"id-2\" shape=box]; \n" \
-        "fw_id_0 [label=\"id-1\" shape=box color=red]; \n" \
-        "fw_id_1 [label=\"id-2\" shape=box color=red]; \n" \
-        "switch_l2 [label\"Switch\"]; \n" \
-        "vxlan [label\"VXLAN\"]; \n" \
-        "dpdk [label\"DPDK\"]; \n" \
-        "nic_0 -- fw_id_0; \n" \
-        "nic_1 -- fw_id_1; \n" \
-        "fw_id_0 -- switch_l2; \n" \
-        "fw_id_1 -- switch_l2; \n" \
-        "switch_l2 -- vxlan; \n" \
-        "vxlan -- dpdk; \n" \
-        "}";
+    return app::graph.dot();
 }
 
 void API::action_app_quit() {

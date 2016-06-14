@@ -94,7 +94,7 @@ void API_0::nic_add(const MessageV0_Request &req, MessageV0_Response *res) {
 
     app::Error error;
     std::string path;
-    if (!action_nic_add(nic, path, &error)) {
+    if (!action_nic_add(nic, &path, &error)) {
         build_nok_res(res, error);
         return;
     }
@@ -201,7 +201,7 @@ void API_0::nic_stats(const MessageV0_Request &req,
     if (res == nullptr)
         return;
     app::log.info("NIC stats");
-    std::string nic_id = req.nic_export();
+    std::string nic_id = req.nic_stats();
     uint64_t in, out = 0;
     app::Error err;
     if (!action_nic_stats(nic_id, &in, &out, &err)) {
@@ -480,7 +480,7 @@ void API_0::build_nok_res(MessageV0_Response *res) {
 void API_0::build_nok_res(MessageV0_Response *res, std::string description) {
     if (res == nullptr)
         return;
-    LOG_DEBUG_(description);
+    LOG_DEBUG_("%s", description.c_str());
     build_nok_res(res);
     auto s = res->mutable_status();
     s->set_allocated_error(new MessageV0_Error);
