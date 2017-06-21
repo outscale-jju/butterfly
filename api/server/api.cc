@@ -96,6 +96,19 @@ void Api::BuildInternalError(std::string *response) {
     app::log.Debug(human_message);
 }
 
+void Api::BuildPermissionDenied(std::string *response) {
+    proto::Message rep;
+    google::protobuf::TextFormat::Printer printer;
+    std::string human_message;
+
+    rep.set_revision(PROTOS_REVISION);
+    rep.set_allocated_error(new proto::Error);
+    rep.mutable_error()->set_code(proto::Error_Code_PERMISSION_DENIED);
+    rep.SerializeToString(response);
+    printer.PrintToString(rep, &human_message);
+    app::log.Debug(human_message);
+}
+
 void Api::Dispatch(const proto::Message &req, proto::Message *rep) {
     if (rep == nullptr)
         return;

@@ -83,20 +83,39 @@ void ApiServer::StaticLoop(ApiServer *me) {
 
 void
 ApiServer::Process(const zmqpp::message &req, zmqpp::message *res) {
+    std::string request_string;
+    std::string response_string;
+
     // Extract message from ZMQ
     LOG_DEBUG_("unpack request from a ZMQ message");
-    std::string request_string = req.get(0);
+    size_t request_size =  req.size(0);
+    const char *request_enc = reinterpret_cast<const char *>(req.raw_data(0));
+    LOG_DEBUG_("raw request size: %lu", request_size);
 
-    // Process request
-    std::string response_string;
-    try {
-        Api::ProcessRequest(request_string, &response_string);
-    } catch (std::exception &e) {
-        LOG_ERROR_("internal error: %s", e.what());
-        Api::BuildInternalError(&response_string);
+    if (!crypto.Decrypt(request_enc, request_size, &request_string)) {
+        LOG_ERROR_("cannot decrypt message");
+        Api::BuildPermissionDenied(&response_string);
+    } else {
+        LOG_DEBUG_("decrypted message size: %lu", request_string.length());
+        // Process request
+        try {
+            Api::ProcessRequest(request_string, &response_string);
+        } catch (std::exception &e) {
+            LOG_ERROR_("internal error: %s", e.what());
+            Api::BuildInternalError(&response_string);
+        }
     }
 
-    // Pack message in ZMQ
-    LOG_DEBUG_("pack response in a ZMQmessage");
-    *res << response_string;
+    // Encrypt
+    size_t response_len = 0;
+    char *response_enc;
+    if (crypto.Encrypt(response_string, &response_enc, &response_len)) {
+        LOG_DEBUG_("encrypt ok");
+    } else {
+        LOG_ERROR_("internal error: cannot encrypt");
+        Api::BuildInternalError(&response_string);
+        crypto.ClearCode(response_string, &response_enc, &response_len);
+    }
+    res->add_raw(response_enc, response_len);
+    free(response_enc);
 }

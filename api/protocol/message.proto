@@ -40,6 +40,7 @@ message Error {
     INTERNAL_ERROR = 1;
     VERSION_NOT_MANAGED = 2;
     EMPTY_REQUEST = 3;
+    PERMISSION_DENIED = 4;
   }
 }
 

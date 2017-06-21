@@ -15,7 +15,9 @@
  * along with Butterfly.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <cstring>
 #include "api/client/client.h"
+#include "api/common/crypto.h"
 
 RequestOptions::RequestOptions() {
     to_stdout = false;
@@ -80,20 +82,43 @@ int Request(const proto::Messages &req,
         return 1;
     }
 
+    // Encrypt request
+    Crypto::Crypto crypto;
+    crypto.Allow(Crypto::CLEAR);
+    char *enc_request = NULL;
+    size_t enc_size = 0;
+    if (!crypto.Encrypt(str_request, &enc_request, &enc_size)) {
+        cerr << "Error, cannot encrypt message" << endl;
+        return 1;
+    }
+
     // Make ZeroMQ request
     zmqpp::context context;
     zmqpp::socket socket(context, zmqpp::socket_type::request);
     socket.connect(options.endpoint);
-    if (!socket.send(str_request)) {
+    zmqpp::message request;
+    request.add_raw(enc_request, enc_size);
+    if (!socket.send(request)) {
         cerr <<  "Error, cannot send message to endpoint" << endl;
         return 1;
     }
+    free(enc_request);
 
     // Get ZeroMQ response
+    zmqpp::message response;
+    if (!socket.receive(response)) {
+        cerr <<  "Error, cannot receive message from endpoint" << endl;
+        return 1;
+    }
+
+    // Decrypt response
+    size_t response_size = response.size(0);
+    const char *response_enc =
+        reinterpret_cast<const char *>(response.raw_data(0));
     string str_response;
-    if (!socket.receive(str_response)) {
-        cerr <<  "Error, cannot receive message from endpoint" <<
-        endl;
+    if (!crypto.Decrypt(response_enc, response_size,
+                        &str_response)) {
+        cerr << "Error, cannot decrypt response message" << endl;
         return 1;
     }
 

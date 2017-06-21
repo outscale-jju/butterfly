@@ -3,7 +3,8 @@ set(SOURCES app.cc
             model.cc
             api.cc
             api_0.cc
-            graph.cc)
+            graph.cc
+            ../common/crypto.cc)
 
 set (SOURCES_P)
 foreach (_s ${SOURCES})

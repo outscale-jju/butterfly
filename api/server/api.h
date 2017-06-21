@@ -40,6 +40,10 @@ class Api {
      * @param  response response containing internal error
      */
     static void BuildInternalError(std::string *response);
+    /* Build a standard permission denied error.
+     * @param  response response containing internal error
+     */
+    static void BuildPermissionDenied(std::string *response);
     // This structure centralize description of NicUpdate informations
     struct NicUpdate {
         std::string id;

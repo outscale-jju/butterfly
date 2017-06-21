@@ -21,12 +21,14 @@
 #include <zmqpp/zmqpp.hpp>
 #include <string>
 #include <memory>
+#include "api/common/crypto.h"
 
 class ApiServer {
  public:
     ApiServer(std::string zmq_endpoint, bool *end_trigger);
     void Run();
     void RunThreaded();
+    Crypto::Crypto crypto;
 
  private:
     inline void Prepare();

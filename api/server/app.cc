@@ -472,6 +472,7 @@ main(int argc, char *argv[]) {
         InitCgroup(POLL_THREAD_MULTIPLIER);
         // Prepare & run API server
         ApiServer server(app::config.api_endpoint, &app::request_exit);
+        server.crypto.Allow(Crypto::CLEAR);
         server.RunThreaded();
 
         while (!app::request_exit)

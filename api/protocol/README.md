@@ -17,6 +17,12 @@ described in 'message.proto'.
 
 For documentation on protocol content and parameters, please read .proto files
 
+# Cryptographic layer
+
+Clear message may be encrypted by Butterfly.
+Once the message is encrypted, it is pushed to the transport layer.
+More information about crypto format in api/common/crypto.h
+
 # Transport
 
 Message transport is done using [ZeroMQ](http://zeromq.org/).
@@ -70,3 +76,7 @@ First release of the protocol:
 ## Revision 1
 
 - Add bypass filtering option in vnic creation of Message0
+
+## Revision 2
+
+- Add a PERMISSION_DENY error in Message when message cannot be decrypted
