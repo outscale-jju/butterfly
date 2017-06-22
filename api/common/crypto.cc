@@ -56,6 +56,8 @@ bool Crypto::Encrypt(std::string c, char **e, size_t *es) {
     switch (v) {
         case CLEAR: return Encrypt0(c.c_str(), c.length(), e, es);
         break;
+        case EAS256CBC_SHA512: Encrypt1(c.c_str(), c.length(), e, es);
+        break;
         default: break;
     }
     return false;
@@ -77,6 +79,8 @@ bool Crypto::Decrypt(const char *e, size_t es, std::string *clear) {
     bool ret = false;
     switch (v) {
         case CLEAR: ret = Decrypt0(e, es, &c, &cs);
+        break;
+        case EAS256CBC_SHA512: ret = Decrypt1(e, es, &c, &cs);
         break;
         default: break;
     }
@@ -103,5 +107,23 @@ bool Crypto::Decrypt0(const char *e, size_t es, char **c, size_t *cs) {
     *c = new char[*cs];
     std::memcpy(*c, e + 1, *cs);
     return true;
+}
+
+bool Crypto::Encrypt1(const char *e, size_t es, char **c, size_t *cs) {
+    if (key.length() != 256 + 16) // secret key + iv
+        return false;
+    // TODO
+    return false;
+}
+
+bool Crypto::Decrypt1(const char *e, size_t es, char **c, size_t *cs) {
+    if (key.length() != 256 + 16) // secret key + iv
+        return false;
+
+    if (es <= 1 + 16 + 64) // version + iv + sha-512
+        return false;
+
+    // TODO
+    return false;
 }
 }

@@ -30,13 +30,24 @@
    ## Version 0: (unencrypted)
 
    - XB: All bytes corresponds to the clear message
+
+   ## Version 1:
+
+   - 16B: Initialization Vector (this information does not need to be secret)
+
+    All the following data is encrypted using AES-256 in CBC mode:
+
+   - 64B: SHA-512 of message content (only to check content integrity)
+   - XB: message content
+   - Byte-padding in [PKCS7](https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7)
  */
 
 namespace Crypto {
 
 enum Version {
     CLEAR = 0,
-    MAX = 1,
+    EAS256CBC_SHA512 = 1,
+    MAX = 2,
 };
 
 class Crypto {
@@ -55,6 +66,8 @@ class Crypto {
     bool allowed_[MAX];
     bool Encrypt0(const char *c, size_t cs, char **e, size_t *es);
     bool Decrypt0(const char *e, size_t es, char **c, size_t *cs);
+    bool Encrypt1(const char *c, size_t cs, char **e, size_t *es);
+    bool Decrypt1(const char *e, size_t es, char **c, size_t *cs);
 };
 }
 #endif // COMMON_CRYPTO_H_
