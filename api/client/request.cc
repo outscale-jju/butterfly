@@ -150,36 +150,39 @@ static void PrintError(MessageV0_Error error) {
 }
 
 int CheckRequestResult(const proto::Messages &res) {
-    if (res.messages_size() == 0) {
+    int size = res.messages_size();
+    if (size == 0) {
         cerr << "error: no message in response" << endl;
         return 1;
     }
 
-    if (res.messages(0).has_error()) {
-        cerr << "error in response: ";
-        if (!res.messages(0).error().has_code())
-            cerr << "no error code";
-        else
-            cerr << Error_Code_Name(res.messages(0).error().code());
-        cerr << endl;
-        return 1;
-    }
-
-    if (res.messages(0).has_message_0()) {
-        MessageV0 res_0 = res.messages(0).message_0();
-        if (!res_0.has_response()) {
-            cerr << "error: no response in MessageV0" << endl;
-            return 1;
-        } else if (!res_0.response().status().status()) {
-            cerr << "error in response";
-            if (res_0.response().status().has_error()) {
-                PrintError(res_0.response().status().error());
-            }
+    for (int i = 0; i < size; i++) {
+        if (res.messages(i).has_error()) {
+            cerr << "error in response: ";
+            if (!res.messages(i).error().has_code())
+                cerr << "no error code";
+            else
+                cerr << Error_Code_Name(res.messages(i).error().code());
+            cerr << endl;
             return 1;
         }
-    } else {
-        cerr << "error: no message recognized in response" << endl;
-        return 1;
+
+        if (res.messages(i).has_message_0()) {
+            MessageV0 res_0 = res.messages(i).message_0();
+            if (!res_0.has_response()) {
+                cerr << "error: no response in MessageV0" << endl;
+                return 1;
+            } else if (!res_0.response().status().status()) {
+                cerr << "error in response";
+                if (res_0.response().status().has_error()) {
+                    PrintError(res_0.response().status().error());
+                }
+                return 1;
+            }
+        } else {
+            cerr << "error: no message recognized in response" << endl;
+            return 1;
+        }
     }
     return 0;
 }
