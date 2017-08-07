@@ -487,7 +487,7 @@ bool Graph::NicAdd(app::Nic *nic_) {
     }
 
     name = "vhost-" + gn.id;
-    gn.vhost = BrickShrPtr(pg_vhost_new(name.c_str(), 0,
+    gn.vhost = BrickShrPtr(pg_vhost_new(name.c_str(), PG_VHOST_USER_CLIENT,
                                         &app::pg_error),
                            pg_brick_destroy);
     if (!gn.vhost) {
