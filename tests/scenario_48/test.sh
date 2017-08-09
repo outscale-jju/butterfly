@@ -17,6 +17,9 @@ server_stop 0
 ssh_no_ping 1 2
 ssh_no_ping 2 1
 
+echo "read 1"
+read
+
 server_start 0
 sg_rule_add_icmp 0 sg-1
 nic_add 0 1 42 sg-1
